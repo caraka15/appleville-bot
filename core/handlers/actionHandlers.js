@@ -149,15 +149,9 @@ export async function handleHarvest(bot, slotIndex) {
                 const xp = Math.round(earnings.xpGained || 0);
                 logger.success(`Slot ${slotIndex} dipanen: +${coins} koin, +${ap} AP, +${xp} XP.`);
 
-                // ==========================================================
-                // >> PERUBAHAN UTAMA <<
-                // Jangan panggil handlePlanting di sini.
-                // Biarkan refreshAllTimers yang mengatur ulang logika untuk slot ini.
-                // Ini mencegah panggilan tanam ganda.
-                // ==========================================================
-                await sleep(500);
-                bot.refreshAllTimers(); // Memanggil refresh untuk re-evaluasi semua slot
-                // ==========================================================
+                // Setelah panen, langsung coba tanam kembali tanpa memicu refresh global
+                await sleep(500); // beri waktu server memperbarui state
+                await handlePlanting(bot, slotIndex);
 
                 return; // Sukses, keluar dari loop
             }
@@ -167,10 +161,7 @@ export async function handleHarvest(bot, slotIndex) {
             if (error instanceof SignatureError) return bot.handleSignatureError();
             logger.error(`Gagal memanen slot ${slotIndex}: ${error.message}. Mencoba lagi... (${attempt}/3)`);
             if (attempt < 3) await sleep(5000);
-            else {
-                logger.error(`Gagal total memanen slot ${slotIndex} setelah 3 percobaan.`);
-                bot.refreshAllTimers(); // Refresh bahkan jika gagal total
-            }
+            else logger.error(`Gagal total memanen slot ${slotIndex} setelah 3 percobaan.`);
         }
     }
 }
@@ -186,11 +177,21 @@ export async function handlePlanting(bot, slotIndex) {
 
             if (plantResult.ok) {
                 logger.success(`Slot ${slotIndex} ditanami ${bot.config.seedKey}.`);
+
+                // Update timer tanam berdasarkan state terbaru tanpa memicu refresh global
+                await sleep(500); // beri waktu server memperbarui state
+                try {
+                    const { state } = await api.getState();
+                    const slot = state.plots.find(p => p.slotIndex === slotIndex);
+                    if (slot?.seed) {
+                        bot.setHarvestTimer(slotIndex, new Date(slot.seed.endsAt).getTime());
+                    }
+                } catch (e) {
+                    logger.debug(`Gagal mengambil state setelah tanam slot ${slotIndex}: ${e.message}`);
+                }
                 if (bot.config.boosterKey) {
-                    await sleep(500);
                     await handleBoosterApplication(bot, slotIndex);
                 }
-                bot.refreshAllTimers(); // Panggil refresh setelah berhasil
                 return; // Sukses, keluar
             }
 
@@ -223,8 +224,7 @@ export async function handleBoosterApplication(bot, slotIndex) {
             const currentSlot = state.plots.find(p => p.slotIndex === slotIndex);
             if (currentSlot && currentSlot.modifier) {
                 logger.debug(`Booster untuk slot ${slotIndex} sudah dipasang oleh proses lain.`);
-                bot.refreshAllTimers();
-                return;
+                bot.setBoosterTimer(slotIndex, new Date(currentSlot.modifier.endsAt).getTime()); return;
             }
 
             logger.action('boost', `Memasang booster di slot ${slotIndex}...`);
@@ -232,8 +232,17 @@ export async function handleBoosterApplication(bot, slotIndex) {
 
             if (applyResult.ok) {
                 logger.success(`Booster ${bot.config.boosterKey} terpasang di slot ${slotIndex}.`);
-                bot.refreshAllTimers();
-                return; // Sukses, keluar
+                // Ambil state terbaru untuk menjadwalkan timer booster
+                await sleep(500);
+                try {
+                    const { state } = await api.getState();
+                    const slot = state.plots.find(p => p.slotIndex === slotIndex);
+                    if (slot?.modifier) {
+                        bot.setBoosterTimer(slotIndex, new Date(slot.modifier.endsAt).getTime());
+                    }
+                } catch (e) {
+                    logger.debug(`Gagal mengambil state setelah pasang booster slot ${slotIndex}: ${e.message}`);
+                } return; // Sukses, keluar
             }
 
             // Jika error karena booster habis (race condition), coba lagi dari awal
