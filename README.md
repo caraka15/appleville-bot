@@ -43,7 +43,7 @@ Ini adalah cara termudah dan tercepat untuk memulai.
 1. **Clone Repositori**: Buka terminal Anda dan jalankan perintah berikut.
 
    ```
-   git clone [https://github.com/caraka15/appleville-bot.git](https://github.com/caraka15/appleville-bot.git)
+   git clone https://github.com/caraka15/appleville-bot.git
    ```
 
 2. **Masuk ke Folder**:
